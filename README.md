@@ -1,9 +1,17 @@
 # Lámpara Corazón
 
-Touch-controlled lamp using a LOLIN ESP32-S2 Mini and three daisy-chained
-8-pixel WS2812B blocks (24 pixels total). Each tap on an isolated aluminum
-touch plate increases the brightness; after maximum brightness, the next tap
-turns the lamp off.
+Touch-controlled and Wi-Fi-controlled lamp using a LOLIN ESP32-S2 Mini and
+three daisy-chained 8-pixel WS2812B blocks (24 pixels total). Each tap on an
+isolated aluminum touch plate increases the brightness; after maximum
+brightness, the next tap turns the lamp off.
+
+The firmware also provides:
+
+- Live capacitive readings through USB serial and a web dashboard
+- A password-protected captive access point
+- Optional connection to a home Wi-Fi network
+- Brightness and RGB color controls
+- Browser-based firmware updates (OTA)
 
 ## Important electrical notes
 
@@ -65,8 +73,8 @@ This repository uses PlatformIO and already declares Adafruit NeoPixel.
 3. If upload cannot find the board, hold button `0`/`BOOT`, press and release
    `RST`, release `0`, and upload again. This enters the ROM USB bootloader.
 4. Open the serial monitor at 115200 baud.
-5. After the two-second calibration, compare `touch=...` while released and
-   touched. A touch should clearly exceed `threshold=...`.
+5. After the two-second calibration, compare `raw=...` while released and
+   touched. A touch should clearly exceed `press=...`.
 6. Tap and release the plate. Brightness steps through
    `0, 24, 64, 128, 192, 255`, then returns to `0`.
 
@@ -81,6 +89,71 @@ pio device monitor --baud 115200
 The serial port may disconnect and reappear during flashing because the S2
 Mini uses the ESP32-S2's native USB connection rather than a separate
 USB-to-serial converter.
+
+To see USB logs in VS Code:
+
+1. Wait for the upload to finish and the ESP32-S2 to restart.
+2. Run **PlatformIO: Monitor** separately.
+3. If it opens the old port, close it, press `RST`, and run the monitor again.
+
+Typical sensor output is:
+
+```text
+[4.5s] CAP raw=12345 baseline=12100 press=14520 state=released
+[7.1s] TOUCH reading=17320 baseline=12120 -> brightness=64
+```
+
+On ESP32-S2, touching the plate should make `raw` increase above `press`.
+
+## Web dashboard and captive portal
+
+After every boot, the lamp creates this Wi-Fi network:
+
+| Setting | Value |
+|---|---|
+| Network | `LamparaCorazon` |
+| Wi-Fi password | `corazon24` |
+| Dashboard | `http://192.168.4.1` |
+
+Connect a phone or laptop to `LamparaCorazon`. The dashboard may open
+automatically as a captive portal. If it does not, browse directly to
+`http://192.168.4.1`.
+
+The dashboard displays live `raw`, `baseline`, threshold, touch events, Wi-Fi
+status, and other recent logs. It can also set lamp brightness and color.
+
+### Connect the lamp to home Wi-Fi
+
+Enter the home network name and password on the dashboard. When asked for
+administrator credentials, use:
+
+| Setting | Value |
+|---|---|
+| User | `admin` |
+| Password | `corazon32` |
+
+The credentials are stored in ESP32 nonvolatile memory. The dashboard reports
+the home-network IP after it connects. The lamp access point remains active,
+so `192.168.4.1` remains available even when home Wi-Fi is unavailable.
+
+Change `AP_PASSWORD` and `ADMIN_PASSWORD` near the top of `src/main.cpp`
+before treating the lamp as a finished device.
+
+## Browser OTA update
+
+USB is required for the first installation. Later updates can be installed
+from the dashboard:
+
+1. Compile with **PlatformIO: Build** or `pio run`.
+2. Open the lamp dashboard.
+3. Under **Firmware update**, select:
+   `.pio/build/lolin_s2_mini/firmware.bin`
+4. Submit the form and enter `admin` / `corazon32` when requested.
+5. Keep the lamp powered and wait for the completion message and restart.
+
+Only upload `firmware.bin`, not `firmware.elf` or `bootloader.bin`. If an OTA
+update is interrupted, the currently installed firmware should remain
+bootable; use USB recovery if necessary.
 
 ### Linux `Errno 71: Protocol error`
 
