@@ -11,6 +11,8 @@ The firmware also provides:
 - A password-protected captive access point
 - Optional connection to a home Wi-Fi network
 - Brightness and RGB color controls
+- A synchronized bottom-to-top animation across the three vertical faces
+- Smooth three-color transitions with an adjustable cycle time
 - Browser-based firmware updates (OTA)
 
 ## Important electrical notes
@@ -120,7 +122,20 @@ automatically as a captive portal. If it does not, browse directly to
 `http://192.168.4.1`.
 
 The dashboard displays live `raw`, `baseline`, threshold, touch events, Wi-Fi
-status, and other recent logs. It can also set lamp brightness and color.
+status, and other recent logs. It can also set lamp brightness, a solid color,
+or a smooth repeating cycle between three selected colors.
+
+Every touch or web brightness change clears the display and lights one
+horizontal row at a time from bottom to top on all three 8-LED faces. Firmware
+assumes each block occupies eight consecutive pixel addresses and pixel zero
+is at the bottom. If one face animates downward, change its corresponding
+entry in `FACE_REVERSED` near the top of `src/main.cpp` from `false` to `true`:
+
+```cpp
+constexpr bool FACE_REVERSED[3] = {false, false, false};
+```
+
+The entries correspond to LED blocks 1, 2, and 3.
 
 ### Connect the lamp to home Wi-Fi
 

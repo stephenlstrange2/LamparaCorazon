@@ -25,7 +25,14 @@ constexpr uint32_t CALIBRATION_MS = 2000;
 constexpr uint32_t TOUCH_DEBOUNCE_MS = 45;
 constexpr uint32_t RELEASE_DEBOUNCE_MS = 100;
 constexpr uint32_t TOUCH_REPORT_MS = 500;
+constexpr uint32_t ANIMATION_STEP_MS = 55;
+constexpr uint32_t COLOR_FRAME_MS = 30;
 constexpr size_t LOG_LINES = 40;
+constexpr uint8_t FACE_COUNT = 3;
+constexpr uint8_t LEDS_PER_FACE = 8;
+
+// Set an entry to true if that face's pixel 0 is physically at the top.
+constexpr bool FACE_REVERSED[FACE_COUNT] = {false, false, false};
 
 Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 DNSServer dnsServer;
@@ -37,6 +44,10 @@ size_t brightnessLevel = 0;
 uint8_t lampRed = 255;
 uint8_t lampGreen = 135;
 uint8_t lampBlue = 35;
+uint32_t cycleColors[3] = {0xff315f, 0x7b2cff, 0xffa126};
+bool cycleEnabled = false;
+uint32_t cycleDurationMs = 15000;
+uint32_t lastColorFrame = 0;
 bool touchLatched = false;
 uint32_t candidateSince = 0;
 uint32_t lastTouchReport = 0;
@@ -49,21 +60,36 @@ const char DASHBOARD_HTML[] PROGMEM = R"HTML(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Lampara Corazon</title>
 <style>
-body{font:16px system-ui;background:#17131a;color:#f8eefa;max-width:760px;margin:auto;padding:20px}
-.card{background:#29222d;border-radius:14px;padding:18px;margin:14px 0}
-button,input{font:inherit;padding:10px;margin:5px;border-radius:8px;border:1px solid #745f7c}
-button{background:#df4e78;color:white;cursor:pointer}input[type=range]{width:70%}
-pre{background:#0e0c10;padding:12px;overflow:auto;min-height:190px;white-space:pre-wrap}
-.ok{color:#7ee09b}.muted{color:#beaebe}a{color:#ff9db9}
+*{box-sizing:border-box}body{font:16px system-ui;background:linear-gradient(145deg,#160f1d,#301528);
+color:#fff4fb;max-width:820px;margin:auto;padding:18px}.hero{padding:12px 4px}
+.card{background:#ffffff10;border:1px solid #ffffff1f;box-shadow:0 12px 30px #0005;
+backdrop-filter:blur(12px);border-radius:18px;padding:20px;margin:14px 0}
+.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.grow{flex:1;min-width:180px}
+button,input{font:inherit;padding:11px;border-radius:10px;border:1px solid #ffffff28}
+button{background:#ed477d;color:white;font-weight:700;cursor:pointer}button.secondary{background:#7452d6}
+input{background:#1a1420;color:white}input[type=range]{width:100%;accent-color:#ed477d}
+input[type=color]{width:64px;height:48px;padding:4px}.colors{display:flex;gap:12px;flex-wrap:wrap}
+pre{background:#0b0910;padding:14px;overflow:auto;min-height:190px;max-height:330px;
+white-space:pre-wrap;border-radius:12px;color:#aaf7c4}.ok{color:#7ee09b}.muted{color:#cbbaca}
+h1,h2{margin:.3em 0}.pill{display:inline-block;background:#ffffff18;padding:6px 10px;border-radius:99px}
 </style></head><body>
-<h1>Lampara Corazon</h1>
+<div class=hero><h1>♥ Lampara Corazon</h1><div id=status class=pill>Connecting...</div></div>
 <div class=card>
- <div id=status>Connecting...</div>
- <p>Brightness <b id=bv>0</b></p>
- <input id=b type=range min=0 max=255 value=0 oninput="bv.textContent=this.value">
- <button onclick="setBrightness()">Apply</button>
- <p>Color <input id=c type=color value="#ff8723">
- <button onclick="setColor()">Apply</button></p>
+ <h2>Light</h2>
+ <div class=row><div class=grow><label>Brightness <b id=bv>0</b></label>
+ <input id=b type=range min=0 max=255 value=0 oninput="bv.textContent=this.value"></div>
+ <button onclick="setBrightness()">Animate up</button></div>
+ <div class=row><label>Solid color</label><input id=c type=color value="#ff8723"
+ onchange="setColor()"><span class=muted>Select a color to apply it immediately.</span></div>
+</div>
+<div class=card>
+ <h2>Color cycle</h2>
+ <p class=muted>Smoothly transition through three colors.</p>
+ <div class=colors><input id=c1 type=color value="#ff315f">
+ <input id=c2 type=color value="#7b2cff"><input id=c3 type=color value="#ffa126"></div>
+ <div class=row><label>Full cycle</label><input id=secs type=number min=3 max=3600 value=15>
+ <span>seconds</span><button class=secondary onclick="startCycle()">Start cycle</button>
+ <button onclick="stopCycle()">Stop</button></div>
 </div>
 <div class=card>
  <h2>Capacitive sensor and logs</h2>
@@ -87,18 +113,26 @@ pre{background:#0e0c10;padding:12px;overflow:auto;min-height:190px;white-space:p
  <p class=muted>Wi-Fi and OTA ask for admin / corazon32.</p>
 </div>
 <script>
+let initialized=false;
 async function refresh(){
  try{
   let s=await (await fetch('/api/status')).json();
   status.innerHTML=`AP: <span class=ok>${s.ap_ip}</span> | Wi-Fi: ${s.sta}`;
-  b.value=s.brightness;bv.textContent=s.brightness;c.value=s.color;
+  if(document.activeElement!==b){b.value=s.brightness;bv.textContent=s.brightness}
+  if(!initialized){c.value=s.color;initialized=true}
   logs.textContent=await (await fetch('/api/logs')).text();
+  logs.scrollTop=logs.scrollHeight;
  }catch(e){status.textContent='Connection lost';}
 }
 async function setBrightness(){await fetch('/api/brightness',{method:'POST',
  headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'value='+b.value});refresh()}
 async function setColor(){await fetch('/api/color',{method:'POST',
  headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'value='+c.value.slice(1)});refresh()}
+async function startCycle(){let q=new URLSearchParams({c1:c1.value.slice(1),c2:c2.value.slice(1),
+ c3:c3.value.slice(1),seconds:secs.value,enabled:'1'});await fetch('/api/cycle',{method:'POST',
+ headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});refresh()}
+async function stopCycle(){await fetch('/api/cycle',{method:'POST',headers:
+ {'Content-Type':'application/x-www-form-urlencoded'},body:'enabled=0'});refresh()}
 refresh();setInterval(refresh,1000);
 </script></body></html>
 )HTML";
@@ -129,10 +163,55 @@ uint32_t readTouchAverage() {
   return static_cast<uint32_t>(sum / SAMPLE_COUNT);
 }
 
+uint8_t blendChannel(uint8_t from, uint8_t to, uint16_t amount) {
+  return from + (static_cast<int16_t>(to) - from) * amount / 1000;
+}
+
+uint32_t currentLampColor() {
+  if (!cycleEnabled) {
+    return pixels.Color(lampRed, lampGreen, lampBlue);
+  }
+
+  const uint32_t position = millis() % cycleDurationMs;
+  const uint32_t scaled = position * 3000ULL / cycleDurationMs;
+  const uint8_t segment = scaled / 1000;
+  const uint16_t amount = scaled % 1000;
+  const uint32_t from = cycleColors[segment];
+  const uint32_t to = cycleColors[(segment + 1) % 3];
+  return pixels.Color(
+      blendChannel(from >> 16, to >> 16, amount),
+      blendChannel(from >> 8, to >> 8, amount),
+      blendChannel(from, to, amount));
+}
+
+uint16_t pixelForRow(uint8_t face, uint8_t rowFromBottom) {
+  const uint8_t localPixel =
+      FACE_REVERSED[face] ? LEDS_PER_FACE - 1 - rowFromBottom : rowFromBottom;
+  return face * LEDS_PER_FACE + localPixel;
+}
+
 void showLamp() {
   pixels.setBrightness(BRIGHTNESS_LEVELS[brightnessLevel]);
-  pixels.fill(pixels.Color(lampRed, lampGreen, lampBlue));
+  pixels.fill(currentLampColor());
   pixels.show();
+}
+
+void animateBrightnessUp() {
+  pixels.setBrightness(BRIGHTNESS_LEVELS[brightnessLevel]);
+  pixels.clear();
+  pixels.show();
+
+  for (uint8_t row = 0; row < LEDS_PER_FACE; ++row) {
+    const uint32_t color = currentLampColor();
+    for (uint8_t litRow = 0; litRow <= row; ++litRow) {
+      for (uint8_t face = 0; face < FACE_COUNT; ++face) {
+        pixels.setPixelColor(pixelForRow(face, litRow), color);
+      }
+    }
+    pixels.show();
+    delay(ANIMATION_STEP_MS);
+  }
+  showLamp();
 }
 
 void setBrightness(uint8_t requested) {
@@ -147,7 +226,7 @@ void setBrightness(uint8_t requested) {
     }
   }
   brightnessLevel = closest;
-  showLamp();
+  animateBrightnessUp();
   addLog("Brightness set to %u/255", BRIGHTNESS_LEVELS[brightnessLevel]);
 }
 
@@ -226,8 +305,39 @@ void configureWebServer() {
     lampRed = color >> 16;
     lampGreen = color >> 8;
     lampBlue = color;
+    cycleEnabled = false;
     showLamp();
     addLog("Color set to #%s", value.c_str());
+    server.send(204);
+  });
+
+  server.on("/api/cycle", HTTP_POST, [] {
+    const bool requestedEnabled = server.arg("enabled") == "1";
+    if (requestedEnabled) {
+      const String values[3] = {server.arg("c1"), server.arg("c2"),
+                                server.arg("c3")};
+      for (uint8_t index = 0; index < 3; ++index) {
+        if (values[index].length() != 6) {
+          server.send(400, "text/plain", "Expected three RRGGBB colors");
+          return;
+        }
+        cycleColors[index] = strtoul(values[index].c_str(), nullptr, 16);
+      }
+      const uint32_t seconds =
+          constrain(server.arg("seconds").toInt(), 3, 3600);
+      cycleDurationMs = seconds * 1000UL;
+      cycleEnabled = true;
+      addLog("Color cycle started: %lu seconds",
+             static_cast<unsigned long>(seconds));
+    } else {
+      const uint32_t color = currentLampColor();
+      cycleEnabled = false;
+      lampRed = color >> 16;
+      lampGreen = color >> 8;
+      lampBlue = color;
+      addLog("Color cycle stopped");
+    }
+    showLamp();
     server.send(204);
   });
 
@@ -361,7 +471,7 @@ void loop() {
       candidateSince = 0;
       if (touchLatched) {
         brightnessLevel = (brightnessLevel + 1) % LEVEL_COUNT;
-        showLamp();
+        animateBrightnessUp();
         addLog("TOUCH reading=%lu baseline=%lu -> brightness=%u",
                static_cast<unsigned long>(reading),
                static_cast<unsigned long>(baseline),
@@ -386,5 +496,10 @@ void loop() {
            static_cast<unsigned long>(baseline),
            static_cast<unsigned long>(pressThreshold),
            touchLatched ? "TOUCHED" : "released");
+  }
+
+  if (cycleEnabled && now - lastColorFrame >= COLOR_FRAME_MS) {
+    lastColorFrame = now;
+    showLamp();
   }
 }
