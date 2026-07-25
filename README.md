@@ -82,6 +82,24 @@ The serial port may disconnect and reappear during flashing because the S2
 Mini uses the ESP32-S2's native USB connection rather than a separate
 USB-to-serial converter.
 
+### Linux `Errno 71: Protocol error`
+
+The project disables esptool's DTR/RTS reset because some Linux USB stacks do
+not support that operation on the S2's native `/dev/ttyACM*` port. PlatformIO
+first performs the supported 1200-baud USB reset, then esptool connects without
+resetting a second time.
+
+If automatic upload still does not enter the bootloader:
+
+1. Close every serial monitor using `/dev/ttyACM0`.
+2. Hold the board's `0` button.
+3. Press and release `RST`.
+4. Release `0`.
+5. Start **PlatformIO: Upload**.
+
+After a successful upload, press `RST` once if the application does not begin
+automatically. The `/dev/ttyACM` number can change after a reset.
+
 ## Troubleshooting touch
 
 - **Touch never triggers:** watch the serial values. If touch rises by less
